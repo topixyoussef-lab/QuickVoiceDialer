@@ -1,0 +1,31 @@
+# ── Android / Gradle ────────────────────────────────────────────────────────
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+app/build/
+core/*/build/
+feature/*/build/
+desktop/build/
+
+# ── Node.js ────────────────────────────────────────────────────────────────
+server/node_modules/
+server/.env
+
+# ── Binaries (too large for git — upload to GitHub Releases instead) ────────
+server/releases/*.apk
+server/releases/*.msi
+server/releases/*.zip
+
+# ── Java crash logs ────────────────────────────────────────────────────────
+hs_err_pid*.log
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+Thumbs.db
+*.swp
+*~
