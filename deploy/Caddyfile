@@ -1,0 +1,9 @@
+# Replace signal.example.com with your domain (must point at this server).
+# Caddy auto-provisions the HTTPS certificate.
+signal.example.com {
+	reverse_proxy signaling:8080
+	encode zstd gzip
+}
+
+# Optional: if you do not have a domain, Caddy can still do TLS via a
+# self-signed certificate, but apps will reject it. Prefer the domain.

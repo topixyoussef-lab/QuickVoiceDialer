@@ -1,0 +1,45 @@
+services:
+  # WebRTC signaling + APK update distribution.
+  signaling:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    # Publish a new APK by dropping it in ../server/releases (or the same
+    # folder on the VM) and editing version.json — no image rebuild needed.
+    volumes:
+      - ../server/releases:/app/releases
+
+  # TURN/STUN relay so audio works between two different networks
+  # (symmetric NAT otherwise blocks direct WebRTC media).
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./coturn.conf:/etc/coturn/turnserver.conf:ro
+    network_mode: host
+    # Edit coturn.conf (user=quickvoice:<password>) to set the TURN credentials
+    # the app will use. network_mode host is required so coturn binds 3478/udp
+    # properly. If you prefer bridge: use ports instead and drop network_mode.
+
+  # Reverse proxy: automatic HTTPS. Make sure your DNS A/AAAA record points
+  # to this server and that 80/443 are reachable from the internet.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - signaling
+
+volumes:
+  caddy_data:
+  caddy_config:

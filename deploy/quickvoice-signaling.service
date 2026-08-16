@@ -1,0 +1,18 @@
+[Unit]
+Description=Quick Voice WebRTC signaling server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quickvoice
+WorkingDirectory=/opt/quickvoice/server
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+# The update + signaling endpoints share port 8080.
+# Run behind nginx/caddy for HTTPS (wss://your.domain/signaling).
+
+[Install]
+WantedBy=multi-user.target
