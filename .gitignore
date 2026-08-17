@@ -1,0 +1,29 @@
+# ── Android / Gradle ────────────────────────────────────────────────────────
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+app/build/
+core/*/build/
+feature/*/build/
+desktop/build/
+
+# ── Firebase config (contains API keys — never commit) ─────────────────────
+app/google-services.json
+
+# ── Java crash logs ────────────────────────────────────────────────────────
+hs_err_pid*.log
+
+# ── Server (removed — using Firebase) ───────────────────────────────────────
+server/
+Procfile
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+Thumbs.db
+*.swp
+*~
