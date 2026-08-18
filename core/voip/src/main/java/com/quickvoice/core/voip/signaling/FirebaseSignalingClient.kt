@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.util.UUID
+import kotlin.random.Random
 
 /**
  * Firebase Realtime Database signaling client — replaces the self-hosted WebSocket server.
@@ -42,6 +43,7 @@ class FirebaseSignalingClient(
 
     @Volatile private var started = false
     @Volatile private var myUserId: String = ""
+    @Volatile private var myShortId: String = ""
     @Volatile private var inboxListener: ChildEventListener? = null
 
     private var displayName: String = ""
@@ -108,6 +110,10 @@ class FirebaseSignalingClient(
                 }
 
                 Log.i(TAG, "Firebase anonymous uid: $myUserId")
+
+                // Resolve or generate a short numeric ID (8 digits) for this user
+                myShortId = resolveOrCreateShortId()
+
                 registerFcmToken()
                 setPresence(true)
                 if (displayName.isNotEmpty()) {
@@ -115,12 +121,52 @@ class FirebaseSignalingClient(
                 }
                 listenInbox()
                 _events.tryEmit(SignalEvent.SocketOpen(myUserId))
-                _events.tryEmit(SignalEvent.Registered(myUserId, myUserId))
+                _events.tryEmit(SignalEvent.Registered(myShortId, displayName.ifBlank { myShortId }))
             } catch (t: Throwable) {
                 Log.e(TAG, "Firebase connect failed", t)
                 _events.tryEmit(SignalEvent.SocketFailure(t.message ?: "Firebase connect failed"))
             }
         }
+    }
+
+    /**
+     * Look up or create a short numeric ID (8 digits) mapped to this Firebase UID.
+     * Stored in Firebase RTDB under /directory/{shortId} → firebaseUid and
+     * /devices/{firebaseUid}/shortId.
+     */
+    private suspend fun resolveOrCreateShortId(): String {
+        val dirRef = database.getReference("directory")
+        val myDeviceRef = database.getReference("devices").child(myUserId).child("shortId")
+
+        // Check if we already have a short ID assigned
+        val existing = myDeviceRef.get().await().value as? String
+        if (!existing.isNullOrBlank() && existing.all { it.isDigit() }) {
+            Log.i(TAG, "Existing short ID: $existing")
+            return existing
+        }
+
+        // Generate a unique 8-digit number
+        val newShortId = generateUniqueShortId(dirRef)
+        dirRef.child(newShortId).setValue(myUserId).await()
+        myDeviceRef.setValue(newShortId).await()
+        Log.i(TAG, "Created short ID: $newShortId")
+        return newShortId
+    }
+
+    private suspend fun generateUniqueShortId(dirRef: com.google.firebase.database.DatabaseReference): String {
+        repeat(20) {
+            val candidate = Random.nextLong(10000000L, 99999999L).toString()
+            val existing = dirRef.child(candidate).get().await().value
+            if (existing == null) return candidate
+        }
+        throw IllegalStateException("Could not generate unique short ID after 20 attempts")
+    }
+
+    /** Resolve a short numeric ID to a Firebase UID. Returns the input if it's already a UID. */
+    suspend fun resolveTargetUserId(id: String): String {
+        val trimmed = id.trim()
+        if (trimmed.length == 28 && trimmed.all { it.isLetterOrDigit() }) return trimmed
+        return database.getReference("directory").child(trimmed).get().await().value as? String ?: trimmed
     }
 
     private fun registerFcmToken() {

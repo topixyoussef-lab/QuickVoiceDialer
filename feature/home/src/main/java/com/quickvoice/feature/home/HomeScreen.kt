@@ -194,6 +194,7 @@ fun HomeRoute(
         onCancelMessageMode = viewModel::cancelMessageMode,
         onInstallUpdate = viewModel::installPendingUpdate,
         onDismissUpdate = viewModel::dismissUpdateBanner,
+        onDismissDialerRole = viewModel::dismissDialerBanner,
         onDismissCrash = viewModel::dismissCrashReport,
     )
 }
@@ -230,6 +231,7 @@ private fun HomeScreen(
     onCancelMessageMode: () -> Unit,
     onInstallUpdate: () -> Unit,
     onDismissUpdate: () -> Unit,
+    onDismissDialerRole: () -> Unit,
     onDismissCrash: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(1) }
@@ -286,13 +288,14 @@ private fun HomeScreen(
                 )
             }
 
-            if (!uiState.isDefaultDialer) {
+            if (!uiState.isDefaultDialer && !uiState.dialerBannerDismissed) {
                 BannerCard(
                     title = "Make QuickVoice your phone app",
                     body = "Needed to keep the in-app call screen and auto-speaker during SIM calls.",
                     buttonText = "Set as default",
                     tone = BannerTone.INFO,
                     onClick = onRequestDialerRole,
+                    onDismiss = onDismissDialerRole,
                 )
             }
 

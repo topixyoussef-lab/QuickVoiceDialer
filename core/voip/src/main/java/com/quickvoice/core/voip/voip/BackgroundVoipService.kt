@@ -59,7 +59,7 @@ class BackgroundVoipService : Service() {
             // remoteMessaging is only a valid foreground service type from Android 14
             // (API 34); on older versions the type is taken from the manifest.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
             } else {
                 @Suppress("DEPRECATION")
                 startForeground(NOTIFICATION_ID, notification)

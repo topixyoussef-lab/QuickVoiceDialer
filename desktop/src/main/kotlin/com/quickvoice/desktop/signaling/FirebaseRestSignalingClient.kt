@@ -187,7 +187,7 @@ class FirebaseRestSignalingClient(
     private suspend fun rtdbDelete(path: String) {
         val url = "$RTDB_URL/$path.json?auth=$authToken"
         val req = Request.Builder().url(url).delete().build()
-        okHttpClient.newCall(req).execute().close()
+        okHttpClient.newCall(req).execute().use { }
     }
 
     // ── short numeric ID ─────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ class FirebaseRestSignalingClient(
             var failCount = 0
             while (started && !Thread.currentThread().isInterrupted) {
                 try {
-                    val url = "$RTDB_URL/inbox/$myUserId.json?auth=$authToken&shallow=true"
+                    val url = "$RTDB_URL/inbox/$myUserId.json?auth=$authToken"
                     val req = Request.Builder().url(url).get().build()
                     val resp = okHttpClient.newCall(req).execute()
                     resp.use { r ->
@@ -298,6 +298,7 @@ class FirebaseRestSignalingClient(
                         from = obj.optString("from"),
                         fromName = obj.optString("fromName", obj.optString("from")),
                         sdp = obj.optString("sdp"),
+                        mode = obj.optString("mode", "call"),
                     )
                 )
                 "answer" -> _events.tryEmit(

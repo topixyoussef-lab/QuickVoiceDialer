@@ -27,3 +27,7 @@ Procfile
 Thumbs.db
 *.swp
 *~
+
+# Kotlin & replay logs
+replay_pid*.log
+.kotlin/

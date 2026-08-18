@@ -40,7 +40,9 @@ data class HomeUiState(
     val quickVoiceEnabled: Boolean = false,
     val defaultCallType: CallType = CallType.SIM,
     val voipUserId: String = "",
+    val voipDisplayName: String = "",
     val isDefaultDialer: Boolean = false,
+    val dialerBannerDismissed: Boolean = false,
     val signalingState: SignalingState = SignalingState.DISCONNECTED,
     val updateReady: Boolean = false,
     val updateVersionName: String = "",
@@ -98,6 +100,16 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             voipCallManager.userId.collect { id ->
                 _uiState.update { it.copy(voipUserId = id) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.voipDisplayName.collect { name ->
+                _uiState.update { it.copy(voipDisplayName = name) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.defaultDialerBannerDismissed.collect { dismissed ->
+                _uiState.update { it.copy(dialerBannerDismissed = dismissed) }
             }
         }
         viewModelScope.launch {
@@ -191,6 +203,12 @@ class HomeViewModel @Inject constructor(
     }
 
     fun requestDialerRoleIntent(): Intent? = defaultDialerManager.requestDialerRoleIntent()
+
+    fun dismissDialerBanner() {
+        viewModelScope.launch {
+            settingsRepository.setDefaultDialerBannerDismissed(true)
+        }
+    }
 
     fun consumeNotice() {
         _uiState.update { it.copy(notice = null) }

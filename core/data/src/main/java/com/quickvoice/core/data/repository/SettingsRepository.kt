@@ -39,6 +39,7 @@ class SettingsRepository @Inject constructor(
         val START_WITH_SPEAKER = booleanPreferencesKey("start_with_speaker")
         val RINGTONE_URI = stringPreferencesKey("ringtone_uri")
         val BACKGROUND_SERVICE_ENABLED = booleanPreferencesKey("background_service_enabled")
+        val DEFAULT_DIALER_BANNER_DISMISSED = booleanPreferencesKey("default_dialer_banner_dismissed")
     }
 
     val quickVoiceSettings: Flow<QuickVoiceSettings> = dataStore.data.map { p ->
@@ -134,6 +135,12 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setBackgroundServiceEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.BACKGROUND_SERVICE_ENABLED] = enabled }
+    }
+
+    val defaultDialerBannerDismissed: Flow<Boolean> = dataStore.data.map { it[Keys.DEFAULT_DIALER_BANNER_DISMISSED] ?: false }
+
+    suspend fun setDefaultDialerBannerDismissed(dismissed: Boolean) {
+        dataStore.edit { it[Keys.DEFAULT_DIALER_BANNER_DISMISSED] = dismissed }
     }
 
     companion object {

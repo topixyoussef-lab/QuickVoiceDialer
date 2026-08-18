@@ -10,7 +10,7 @@ sealed class SignalEvent {
 
     data class Registered(val userId: String, val displayName: String) : SignalEvent()
 
-    data class IncomingCall(val callId: String, val from: String, val fromName: String, val sdp: String) : SignalEvent()
+    data class IncomingCall(val callId: String, val from: String, val fromName: String, val sdp: String, val mode: String = "call") : SignalEvent()
     data class RemoteAnswer(val callId: String, val sdp: String) : SignalEvent()
     data class RemoteOffer(val callId: String, val sdp: String) : SignalEvent()
     data class RemoteIce(val callId: String, val sdpMid: String?, val sdpMLineIndex: Int, val candidate: String) : SignalEvent()

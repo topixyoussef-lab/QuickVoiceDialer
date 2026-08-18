@@ -241,6 +241,18 @@ class VoipCallManager @Inject constructor(
             _lastError.value = "VoIP server is not connected"
             return
         }
+
+        scope.launch {
+            val resolvedId = try {
+                signalingClient.resolveTargetUserId(peerId)
+            } catch (t: Throwable) {
+                peerId
+            }
+            placeCallResolved(resolvedId, displayName, mode)
+        }
+    }
+
+    private fun placeCallResolved(peerId: String, displayName: String, mode: String) {
         this.peerId = peerId
         this.peerDisplayName = displayName.ifBlank { peerId }
         isCaller = true
