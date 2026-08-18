@@ -12,41 +12,29 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.Base64
 import java.util.UUID
 import kotlin.random.Random
 
 /**
- * Desktop replacement for [FirebaseSignalingClient] on Android. Uses the Firebase
- * REST API (Identity Toolkit for anonymous auth, RTDB REST + SSE for signaling)
- * so the desktop app can call Android users without any Firebase SDK dependency.
- *
- * Protocol (identical to the Android client):
- *   - Anonymous auth → stable UID
- *   - /directory/{shortId} → firebaseUid
- *   - /devices/{uid} → displayName, online, lastSeen
- *   - /inbox/{uid}/{autoId} → signaling JSON, listened via SSE (child_added)
+ * Desktop replacement for FirebaseSignalingClient on Android. Uses Firebase REST API
+ * (Identity Toolkit for anonymous auth, RTDB REST + polling for signaling) so the
+ * desktop app can call Android users without any Firebase SDK dependency.
  */
 class FirebaseRestSignalingClient(
     private val okHttpClient: OkHttpClient,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     private val _events = MutableSharedFlow<SignalEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SignalEvent> = _events.asSharedFlow()
 
     @Volatile private var started = false
     @Volatile private var myUserId = ""
     @Volatile private var myShortId = ""
-    @Volatile private var authToken: String = ""
-    @Volatile private var displayName: String = ""
+    @Volatile private var authToken = ""
+    @Volatile private var displayName = ""
     @Volatile private var sseThread: Thread? = null
-
-    // ── public API ───────────────────────────────────────────────────────────
 
     fun start() {
         if (started) return
@@ -58,7 +46,7 @@ class FirebaseRestSignalingClient(
         displayName = name
         if (myUserId.isNotEmpty() && authToken.isNotEmpty()) {
             scope.launch {
-                rtdbPut("devices/$myUserId/displayName", JSONObject().put("value", name))
+                rtdbPutRaw("devices/$myUserId/displayName", "\"${name.replace("\"", "\\\"")}\"")
             }
         }
     }
@@ -74,14 +62,10 @@ class FirebaseRestSignalingClient(
         myUserId = ""
     }
 
-    /**
-     * Send a signaling message. The [payload] must contain a "to" field with the target user's
-     * short ID or Firebase UID. The message is written to /inbox/{resolvedTargetUid}/{autoId}.
-     */
     fun send(type: String, payload: JSONObject) {
         val target = payload.optString("to", "")
         if (target.isBlank()) {
-            System.err.println("[FirebaseRestSignaling] send() called without 'to' field for type=$type")
+            System.err.println("[FirebaseRest] send() without 'to' for type=$type")
             return
         }
         scope.launch {
@@ -90,6 +74,7 @@ class FirebaseRestSignalingClient(
                 val message = JSONObject().apply {
                     put("type", type)
                     put("from", myUserId)
+                    put("fromName", displayName.ifBlank { myShortId })
                     val keys = payload.keys()
                     while (keys.hasNext()) {
                         val key = keys.next()
@@ -97,14 +82,14 @@ class FirebaseRestSignalingClient(
                     }
                     put("ts", System.currentTimeMillis())
                 }
-                rtdbPost("inbox/$resolvedTarget", message)
+                rtdbPost("inbox/$resolvedTarget", message.toString())
             } catch (t: Throwable) {
-                System.err.println("[FirebaseRestSignaling] Failed to send signal: ${t.message}")
+                System.err.println("[FirebaseRest] Failed to send: ${t.message}")
             }
         }
     }
 
-    // ── internals ────────────────────────────────────────────────────────────
+    // ── connect ──────────────────────────────────────────────────────────────
 
     private suspend fun connectNow() {
         try {
@@ -115,86 +100,94 @@ class FirebaseRestSignalingClient(
                 _events.tryEmit(SignalEvent.SocketFailure("Firebase anonymous auth failed"))
                 return
             }
-            println("[FirebaseRestSignaling] Firebase anonymous uid: $myUserId")
+            println("[FirebaseRest] Firebase uid: $myUserId")
 
             myShortId = resolveOrCreateShortId()
             setPresence(true)
             if (displayName.isNotEmpty()) {
-                rtdbPut("devices/$myUserId/displayName", JSONObject().put("value", displayName))
+                rtdbPutRaw("devices/$myUserId/displayName", "\"${displayName.replace("\"", "\\\"")}\"")
             }
-            listenInboxSse()
+            startInboxPolling()
             _events.tryEmit(SignalEvent.SocketOpen(myUserId))
             _events.tryEmit(SignalEvent.Registered(myShortId, displayName.ifBlank { myShortId }))
         } catch (t: Throwable) {
-            System.err.println("[FirebaseRestSignaling] Firebase connect failed: ${t.message}")
+            System.err.println("[FirebaseRest] Connect failed: ${t.message}")
             _events.tryEmit(SignalEvent.SocketFailure(t.message ?: "Firebase connect failed"))
         }
     }
 
-    // ── Firebase REST: anonymous auth ────────────────────────────────────────
+    // ── Firebase REST: auth ──────────────────────────────────────────────────
 
     private suspend fun firebaseAnonymousAuth(): JSONObject {
-        val body = JSONObject()
-            .put("returnSecureToken", true)
-            .toString()
+        val body = JSONObject().put("returnSecureToken", true).toString()
         val req = Request.Builder()
             .url("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY")
             .post(body.toRequestBody("application/json".toMediaType()))
             .build()
         val resp = okHttpClient.newCall(req).execute()
-        val text = resp.body?.string().orEmpty()
-        if (!resp.isSuccessful) throw IllegalStateException("Auth failed: ${resp.code} $text")
-        return JSONObject(text)
+        resp.use {
+            val text = it.body?.string().orEmpty()
+            if (!it.isSuccessful) throw IllegalStateException("Auth failed: ${it.code} $text")
+            return JSONObject(text)
+        }
     }
 
-    // ── Firebase REST: RTDB operations ───────────────────────────────────────
+    // ── Firebase REST: RTDB ──────────────────────────────────────────────────
 
-    private suspend fun rtdbGet(path: String): JSONObject? {
+    /** Write a raw JSON value (string, number, boolean, object) to RTDB path. */
+    private suspend fun rtdbPutRaw(path: String, rawJson: String) {
         val url = "$RTDB_URL/$path.json?auth=$authToken"
-        val req = Request.Builder().url(url).get().build()
+        val req = Request.Builder().url(url)
+            .put(rawJson.toRequestBody("application/json".toMediaType()))
+            .build()
         val resp = okHttpClient.newCall(req).execute()
-        val text = resp.body?.string().orEmpty()
-        if (resp.code == 200 && text != "null" && text.isNotBlank()) {
-            return try { JSONObject(text) } catch (_: Throwable) { null }
+        resp.use {
+            if (!it.isSuccessful) {
+                System.err.println("[FirebaseRest] PUT failed $path: ${it.code} ${it.body?.string()}")
+            }
         }
-        return null
+    }
+
+    /** Write a JSON object to RTDB path. */
+    private suspend fun rtdbPutObject(path: String, json: String) = rtdbPutRaw(path, json)
+
+    /** POST (push) a JSON object to an RTDB collection path. Returns push key. */
+    private suspend fun rtdbPost(path: String, json: String): String? {
+        val url = "$RTDB_URL/$path.json?auth=$authToken"
+        val req = Request.Builder().url(url)
+            .post(json.toRequestBody("application/json".toMediaType()))
+            .build()
+        val resp = okHttpClient.newCall(req).execute()
+        resp.use {
+            val text = it.body?.string().orEmpty()
+            if (!it.isSuccessful) {
+                System.err.println("[FirebaseRest] POST failed $path: ${it.code} $text")
+                return null
+            }
+            val obj = try { JSONObject(text) } catch (_: Throwable) { null }
+            return obj?.optString("name")
+        }
     }
 
     private suspend fun rtdbGetString(path: String): String? {
         val url = "$RTDB_URL/$path.json?auth=$authToken"
         val req = Request.Builder().url(url).get().build()
         val resp = okHttpClient.newCall(req).execute()
-        val text = resp.body?.string().orEmpty()
-        if (resp.code == 200 && text != "null" && text.isNotBlank()) {
-            return try { text.trim('"') } catch (_: Throwable) { null }
-        }
-        return null
-    }
-
-    private suspend fun rtdbPut(path: String, value: JSONObject) {
-        val url = "$RTDB_URL/$path.json?auth=$authToken"
-        val body = value.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder().url(url).put(body).build()
-        val resp = okHttpClient.newCall(req).execute()
-        if (!resp.isSuccessful) {
-            System.err.println("[FirebaseRestSignaling] RTDB PUT failed: ${resp.code} ${resp.body?.string()}")
-        }
-    }
-
-    private suspend fun rtdbPost(path: String, value: JSONObject) {
-        val url = "$RTDB_URL/$path.json?auth=$authToken"
-        val body = value.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder().url(url).post(body).build()
-        val resp = okHttpClient.newCall(req).execute()
-        if (!resp.isSuccessful) {
-            System.err.println("[FirebaseRestSignaling] RTDB POST failed: ${resp.code} ${resp.body?.string()}")
+        resp.use {
+            val text = it.body?.string().orEmpty()
+            if (it.code == 200 && text.isNotBlank() && text != "null") {
+                return try {
+                    if (text.startsWith("\"")) text.trim('"') else text
+                } catch (_: Throwable) { null }
+            }
+            return null
         }
     }
 
     private suspend fun rtdbDelete(path: String) {
         val url = "$RTDB_URL/$path.json?auth=$authToken"
         val req = Request.Builder().url(url).delete().build()
-        okHttpClient.newCall(req).execute()
+        okHttpClient.newCall(req).execute().close()
     }
 
     // ── short numeric ID ─────────────────────────────────────────────────────
@@ -202,21 +195,20 @@ class FirebaseRestSignalingClient(
     private suspend fun resolveOrCreateShortId(): String {
         val existing = rtdbGetString("devices/$myUserId/shortId")
         if (!existing.isNullOrBlank() && existing.all { it.isDigit() }) {
-            println("[FirebaseRestSignaling] Existing short ID: $existing")
+            println("[FirebaseRest] Existing short ID: $existing")
             return existing
         }
         val newId = generateUniqueShortId()
-        rtdbPut("directory/$newId", JSONObject().put("value", myUserId))
-        rtdbPut("devices/$myUserId/shortId", JSONObject().put("value", newId))
-        println("[FirebaseRestSignaling] Created short ID: $newId")
+        rtdbPutRaw("directory/$newId", "\"$myUserId\"")
+        rtdbPutRaw("devices/$myUserId/shortId", "\"$newId\"")
+        println("[FirebaseRest] Created short ID: $newId")
         return newId
     }
 
     private suspend fun generateUniqueShortId(): String {
         repeat(20) {
             val candidate = Random.nextLong(10_000_000L, 99_999_999L).toString()
-            val existing = rtdbGetString("directory/$candidate")
-            if (existing == null) return candidate
+            if (rtdbGetString("directory/$candidate") == null) return candidate
         }
         throw IllegalStateException("Could not generate unique short ID after 20 attempts")
     }
@@ -230,21 +222,16 @@ class FirebaseRestSignalingClient(
     // ── presence ─────────────────────────────────────────────────────────────
 
     private suspend fun setPresence(online: Boolean) {
-        rtdbPut("devices/$myUserId/online", JSONObject().put("value", online))
-        rtdbPut("devices/$myUserId/lastSeen", JSONObject().put("value", System.currentTimeMillis()))
+        rtdbPutRaw("devices/$myUserId/online", if (online) "true" else "false")
+        rtdbPutRaw("devices/$myUserId/lastSeen", System.currentTimeMillis().toString())
     }
 
-    // ── inbox listener via SSE ───────────────────────────────────────────────
+    // ── inbox polling ────────────────────────────────────────────────────────
 
-    /**
-     * Listen to /inbox/{uid} using Firebase RTDB Server-Sent Events (SSE).
-     * The RTDB REST API supports `.json?shallow=true` for child_added events.
-     * We poll using GET with `shallow=true` and track new child keys.
-     */
-    private fun listenInboxSse() {
+    private fun startInboxPolling() {
         sseThread?.interrupt()
         sseThread = Thread({
-            println("[FirebaseRestSignaling] Starting inbox SSE listener for $myUserId")
+            println("[FirebaseRest] Inbox polling started for $myUserId")
             val knownKeys = mutableSetOf<String>()
             var failCount = 0
             while (started && !Thread.currentThread().isInterrupted) {
@@ -252,60 +239,50 @@ class FirebaseRestSignalingClient(
                     val url = "$RTDB_URL/inbox/$myUserId.json?auth=$authToken&shallow=true"
                     val req = Request.Builder().url(url).get().build()
                     val resp = okHttpClient.newCall(req).execute()
-                    val text = resp.body?.string().orEmpty()
-                    if (resp.isSuccessful && text.isNotBlank() && text != "null") {
-                        val obj = JSONObject(text)
-                        val keys = obj.keys()
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            if (key !in knownKeys) {
-                                knownKeys.add(key)
-                                val messageObj = obj.optJSONObject(key)
-                                if (messageObj != null) {
-                                    processMessage(messageObj)
-                                    // Delete after processing
-                                    scope.launch { rtdbDelete("inbox/$myUserId/$key") }
+                    resp.use { r ->
+                        val text = r.body?.string().orEmpty()
+                        if (r.isSuccessful && text.isNotBlank() && text != "null") {
+                            val obj = JSONObject(text)
+                            val keys = obj.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                if (key !in knownKeys) {
+                                    knownKeys.add(key)
+                                    val messageObj = obj.optJSONObject(key)
+                                    if (messageObj != null) {
+                                        processMessage(messageObj)
+                                        scope.launch { rtdbDelete("inbox/$myUserId/$key") }
+                                    }
                                 }
                             }
-                        }
-                        failCount = 0
-                    } else if (!resp.isSuccessful && resp.code != 404) {
-                        failCount++
-                        if (failCount > 5) {
-                            _events.tryEmit(SignalEvent.SocketFailure("SSE auth expired, reconnecting"))
-                            scope.launch {
-                                delay(3000)
-                                if (started) connectNow()
+                            knownKeys.retainAll(obj.keys().asSequence().toSet())
+                            failCount = 0
+                        } else if (!r.isSuccessful && r.code != 404) {
+                            failCount++
+                            if (failCount > 5) {
+                                _events.tryEmit(SignalEvent.SocketFailure("Auth expired, reconnecting"))
+                                scope.launch { delay(3000); if (started) connectNow() }
+                                return@Thread
                             }
-                            return@Thread
+                        } else {
+                            failCount = 0
                         }
-                    } else {
-                        failCount = 0
                     }
-                    // Cleanup keys no longer in the response (already deleted)
-                    val currentKeys = if (text.isNotBlank() && text != "null") {
-                        try { JSONObject(text).keys().asSequence().toSet() } catch (_: Throwable) { emptySet() }
-                    } else emptySet()
-                    knownKeys.retainAll(currentKeys)
-
-                    Thread.sleep(1000) // Poll every second
+                    Thread.sleep(1000)
                 } catch (e: InterruptedException) {
                     break
                 } catch (t: Throwable) {
-                    System.err.println("[FirebaseRestSignaling] SSE error: ${t.message}")
+                    System.err.println("[FirebaseRest] Poll error: ${t.message}")
                     failCount++
                     if (failCount > 5) {
-                        scope.launch {
-                            delay(3000)
-                            if (started) connectNow()
-                        }
+                        scope.launch { delay(3000); if (started) connectNow() }
                         return@Thread
                     }
                     Thread.sleep(2000)
                 }
             }
-            println("[FirebaseRestSignaling] SSE listener stopped")
-        }, "firebase-inbox-sse")
+            println("[FirebaseRest] Polling stopped")
+        }, "firebase-inbox-poll")
         sseThread?.isDaemon = true
         sseThread?.start()
     }
@@ -339,10 +316,7 @@ class FirebaseRestSignalingClient(
                 )
                 "hangup" -> _events.tryEmit(SignalEvent.RemoteHangup(obj.optString("callId")))
                 "decline" -> _events.tryEmit(SignalEvent.RemoteDecline(obj.optString("callId")))
-                "presence" -> {
-                    val target = obj.optString("to")
-                    checkPresence(target)
-                }
+                "presence" -> checkPresence(obj.optString("to"))
                 "voicemessage" -> _events.tryEmit(
                     SignalEvent.VoiceMessageReceived(
                         com.quickvoice.core.model.VoiceMessage(
@@ -357,10 +331,10 @@ class FirebaseRestSignalingClient(
                         )
                     )
                 )
-                else -> println("[FirebaseRestSignaling] Unknown message type: $type")
+                else -> println("[FirebaseRest] Unknown type: $type")
             }
         } catch (t: Throwable) {
-            System.err.println("[FirebaseRestSignaling] Failed to process signal: ${t.message}")
+            System.err.println("[FirebaseRest] Process error: ${t.message}")
         }
     }
 
