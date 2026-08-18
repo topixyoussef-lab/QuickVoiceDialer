@@ -29,7 +29,6 @@ class AppState(
     val lastError: StateFlow<String?> = manager.lastError
     val activeSession: StateFlow<CallSession?> = callController.activeSession
 
-    var serverUrl by mutableStateOf(settings.currentServerUrl())
     var user by mutableStateOf(settings.currentUserId())
     var displayName by mutableStateOf(settings.currentDisplayName())
 
@@ -42,7 +41,6 @@ class AppState(
     }
 
     fun saveSettingsAndConnect() {
-        settings.setServerUrl(serverUrl)
         settings.setUserId(user)
         settings.setDisplayName(displayName)
         scope.launch { manager.startServerConnection() }

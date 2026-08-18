@@ -155,14 +155,6 @@ private fun SettingsScreen(appState: AppState, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
-            value = appState.serverUrl,
-            onValueChange = { appState.serverUrl = it },
-            label = { Text("Server URL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
             value = appState.user,
             onValueChange = { appState.user = it },
             label = { Text("My number") },

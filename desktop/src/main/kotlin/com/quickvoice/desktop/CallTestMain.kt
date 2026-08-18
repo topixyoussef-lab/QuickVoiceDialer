@@ -3,7 +3,7 @@ package com.quickvoice.desktop
 import com.quickvoice.core.call.CallController
 import com.quickvoice.core.model.CallState
 import com.quickvoice.desktop.settings.DesktopSettings
-import com.quickvoice.desktop.signaling.SignalingClient
+import com.quickvoice.desktop.signaling.FirebaseRestSignalingClient
 import com.quickvoice.desktop.voip.DesktopVoipManager
 import com.quickvoice.desktop.voip.SignalingState
 import kotlinx.coroutines.CoroutineScope
@@ -39,8 +39,8 @@ fun main() {
 
     val callControllerA = CallController()
     val callControllerB = CallController()
-    val managerA = DesktopVoipManager(settingsA, SignalingClient(newClient()), callControllerA)
-    val managerB = DesktopVoipManager(settingsB, SignalingClient(newClient()), callControllerB)
+    val managerA = DesktopVoipManager(settingsA, FirebaseRestSignalingClient(newClient()), callControllerA)
+    val managerB = DesktopVoipManager(settingsB, FirebaseRestSignalingClient(newClient()), callControllerB)
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     scope.launch { runCatching { managerA.startServerConnection() } }

@@ -9,7 +9,7 @@ import com.quickvoice.core.model.CallState
 import com.quickvoice.core.model.CallType
 import com.quickvoice.desktop.settings.DesktopSettings
 import com.quickvoice.desktop.signaling.SignalEvent
-import com.quickvoice.desktop.signaling.SignalingClient
+import com.quickvoice.desktop.signaling.FirebaseRestSignalingClient
 import dev.onvoid.webrtc.CreateSessionDescriptionObserver
 import dev.onvoid.webrtc.PeerConnectionFactory
 import dev.onvoid.webrtc.PeerConnectionObserver
@@ -62,7 +62,7 @@ data class IncomingCallInfo(
  */
 class DesktopVoipManager(
     private val settings: DesktopSettings,
-    private val signalingClient: SignalingClient,
+    private val signalingClient: FirebaseRestSignalingClient,
     private val callController: CallController,
 ) {
 
@@ -132,14 +132,10 @@ class DesktopVoipManager(
     suspend fun startServerConnection() {
         myUserId = settings.userId.first()
         myDisplayName = settings.displayName.first()
-        val url = settings.serverUrl.first().trim()
-        println("[DesktopVoipManager] connecting to $url as '$myUserId'")
-        if (url.isBlank()) {
-            _signalingState.value = SignalingState.DISCONNECTED
-            return
-        }
+        println("[DesktopVoipManager] connecting as '$myUserId'")
         resolveIceServers()
-        signalingClient.start(url)
+        signalingClient.start()
+        signalingClient.register(myDisplayName)
         _signalingState.value = SignalingState.CONNECTING
     }
 
@@ -168,7 +164,6 @@ class DesktopVoipManager(
             when (event) {
                 is SignalEvent.SocketOpen -> {
                     _signalingState.value = SignalingState.CONNECTING
-                    sendRegister()
                 }
 
                 is SignalEvent.SocketClosed -> {
@@ -202,13 +197,6 @@ class DesktopVoipManager(
                 is SignalEvent.ServerError -> _lastError.value = event.message
             }
         }
-    }
-
-    private fun sendRegister() {
-        val payload = JSONObject()
-            .put("userId", myUserId)
-            .put("displayName", myDisplayName)
-        signalingClient.send("register", payload)
     }
 
     // ---------------------------------------------------------------- outgoing

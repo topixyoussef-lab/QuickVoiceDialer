@@ -7,7 +7,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.quickvoice.core.call.CallController
 import com.quickvoice.desktop.settings.DesktopSettings
-import com.quickvoice.desktop.signaling.SignalingClient
+import com.quickvoice.desktop.signaling.FirebaseRestSignalingClient
 import com.quickvoice.desktop.ui.App
 import com.quickvoice.desktop.voip.DesktopVoipManager
 import okhttp3.OkHttpClient
@@ -17,10 +17,9 @@ fun main() = application {
     val settings = DesktopSettings(DesktopSettings.defaultFile())
     val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
-    val signalingClient = SignalingClient(okHttpClient)
+    val signalingClient = FirebaseRestSignalingClient(okHttpClient)
     val callController = CallController()
     val manager = DesktopVoipManager(settings, signalingClient, callController)
     val appState = AppState(settings, manager, callController)

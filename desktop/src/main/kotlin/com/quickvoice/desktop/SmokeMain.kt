@@ -2,7 +2,7 @@ package com.quickvoice.desktop
 
 import com.quickvoice.core.call.CallController
 import com.quickvoice.desktop.settings.DesktopSettings
-import com.quickvoice.desktop.signaling.SignalingClient
+import com.quickvoice.desktop.signaling.FirebaseRestSignalingClient
 import com.quickvoice.desktop.voip.DesktopVoipManager
 import com.quickvoice.desktop.voip.SignalingState
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +21,7 @@ fun main() {
         .readTimeout(10, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
-    val signalingClient = SignalingClient(okHttpClient)
+    val signalingClient = FirebaseRestSignalingClient(okHttpClient)
     val callController = CallController()
     val manager = DesktopVoipManager(settings, signalingClient, callController)
 
