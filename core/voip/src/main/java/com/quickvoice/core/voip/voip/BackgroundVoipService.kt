@@ -79,10 +79,11 @@ class BackgroundVoipService : Service() {
                 .combine(voipCallManager.userId) { state, id -> state to id }
                 .collect { (state, id) ->
                     val (title, text) = when (state) {
-                        SignalingState.CONNECTED ->
+                        SignalingState.CONNECTED, SignalingState.REGISTERED ->
                             if (id.isNotBlank()) "Wi-Fi calls ready" to "Receiving calls as $id"
                             else "Wi-Fi calls ready" to "Connected"
-                        else -> "QuickVoice" to "Reconnecting…"
+                        SignalingState.CONNECTING -> "QuickVoice" to "Connecting…"
+                        else -> "QuickVoice" to "Disconnected"
                     }
                     getSystemService(NotificationManager::class.java)
                         .notify(NOTIFICATION_ID, notification(title, text))
